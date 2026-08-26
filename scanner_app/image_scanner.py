@@ -6,10 +6,8 @@ import requests
 from pathlib import Path
 
 # ============================================================
-# CONFIGURATION - PASTE YOUR GITHUB TOKEN DIRECTLY BELOW
+# CONFIGURATION
 # ============================================================
-GITHUB_TOKEN = "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"
-
 REPO_OWNER = "jm1d22"
 REPO_NAME = "ColourableZebra3D"
 BRANCH = "main"
@@ -18,6 +16,26 @@ BRANCH = "main"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 COUNTER_FILE = SCRIPT_DIR / ".texture_counter"
+TOKEN_FILE = SCRIPT_DIR / "token.txt"
+
+
+def load_github_token() -> str:
+    """Reads the GitHub Personal Access Token from token.txt in the script directory."""
+    if not TOKEN_FILE.exists():
+        print(f"[WARNING] '{TOKEN_FILE.name}' not found in {SCRIPT_DIR}.")
+        print("[WARNING] Remote GitHub upload will be skipped.")
+        return ""
+    
+    try:
+        with open(TOKEN_FILE, "r", encoding="utf-8") as f:
+            token = f.read().strip()
+            if not token:
+                print(f"[WARNING] '{TOKEN_FILE.name}' is empty. Remote GitHub upload will be skipped.")
+                return ""
+            return token
+    except Exception as e:
+        print(f"[ERROR] Failed to read '{TOKEN_FILE.name}': {e}")
+        return ""
 
 
 def get_next_texture_filename() -> str:
@@ -94,18 +112,17 @@ def upload_texture_to_github(
     remote_filename: str,
     commit_msg: str = "Upload scanned zebra texture",
 ):
-    """Uploads or updates a .jpg texture file directly in docs/assets/textures/ on GitHub via API."""
-    if not GITHUB_TOKEN or GITHUB_TOKEN == "PASTE_YOUR_GITHUB_PAT_HERE":
-        print(
-            "[WARNING] GITHUB_TOKEN is not set in the script. Skipping auto-upload."
-        )
+    """Uploads scanned texture directly into docs/assets/textures/ on GitHub via API."""
+    token = load_github_token()
+    if not token:
+        print("[INFO] Skipping auto-upload due to missing/invalid token.")
         return
 
     remote_path = f"docs/assets/textures/{remote_filename}"
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{remote_path}"
 
     headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
@@ -130,14 +147,12 @@ def upload_texture_to_github(
         print(f"[SUCCESS] Texture uploaded to GitHub repository: {remote_path}")
         print(f"Commit URL: {response.json()['commit']['html_url']}")
     else:
-        print(
-            f"[ERROR] GitHub upload failed ({response.status_code}): {response.json()}"
-        )
+        print(f"[ERROR] GitHub upload failed ({response.status_code}): {response.json()}")
 
 
 def process_zebra_textures():
-    assets_image_dir = PROJECT_ROOT / "assets" / "image"
-    assets_textures_dir = PROJECT_ROOT / "assets" / "textures"
+    assets_image_dir = PROJECT_ROOT / "docs" / "assets" / "image"
+    assets_textures_dir = PROJECT_ROOT / "docs" / "assets" / "textures"
 
     assets_image_dir.mkdir(parents=True, exist_ok=True)
     assets_textures_dir.mkdir(parents=True, exist_ok=True)
@@ -148,19 +163,14 @@ def process_zebra_textures():
     if not success:
         return
 
-    # Generate sequential filename (Texture_0001.jpg, Texture_0002.jpg, etc.)
     sequential_filename = get_next_texture_filename()
     output_2k_path = assets_textures_dir / sequential_filename
 
     img = cv2.imread(str(captured_image_path))
     if img is None:
-        raise FileNotFoundError(
-            f"Failed to load image from {captured_image_path}"
-        )
+        raise FileNotFoundError(f"Failed to load image from {captured_image_path}")
 
-    aruco_dict = cv2.aruco.getPredefinedDictionary(
-        cv2.aruco.DICT_ARUCO_ORIGINAL
-    )
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_ARUCO_ORIGINAL)
     aruco_params = cv2.aruco.DetectorParameters()
     aruco_params.adaptiveThreshWinSizeMin = 3
     aruco_params.adaptiveThreshWinSizeMax = 23
@@ -170,9 +180,7 @@ def process_zebra_textures():
 
     corners, ids, _ = detector.detectMarkers(img)
     if ids is None:
-        raise ValueError(
-            "No ArUco markers detected in the captured photo. Make sure all 4 tags are visible."
-        )
+        raise ValueError("No ArUco markers detected. Ensure all 4 tags are visible.")
 
     ids = ids.flatten()
 
@@ -188,9 +196,7 @@ def process_zebra_textures():
 
     for marker_id in [1, 2, 3, 4]:
         if marker_id not in ids:
-            raise ValueError(
-                f"Missing Marker ID {marker_id} in photo. Detected IDs: {list(ids)}"
-            )
+            raise ValueError(f"Missing Marker ID {marker_id}. Detected IDs: {list(ids)}")
 
         idx = np.where(ids == marker_id)[0][0]
         marker_corners = corners[idx][0]
@@ -205,13 +211,9 @@ def process_zebra_textures():
     dst_pts = np.float32(dst_pts)
 
     matrix, _ = cv2.findHomography(src_pts, dst_pts)
-    texture_2k = cv2.warpPerspective(
-        img, matrix, (2048, 2048), flags=cv2.INTER_LANCZOS4
-    )
+    texture_2k = cv2.warpPerspective(img, matrix, (2048, 2048), flags=cv2.INTER_LANCZOS4)
 
-    cv2.imwrite(
-        str(output_2k_path), texture_2k, [cv2.IMWRITE_JPEG_QUALITY, 95]
-    )
+    cv2.imwrite(str(output_2k_path), texture_2k, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
     print("\n" + "=" * 60)
     print(f"[SUCCESS] Local 2K Texture Saved: {output_2k_path}")
