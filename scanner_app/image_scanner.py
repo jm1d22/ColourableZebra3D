@@ -1,11 +1,45 @@
+import base64
+import os
 import cv2
 import numpy as np
+import requests
 from pathlib import Path
+
+# ============================================================
+# CONFIGURATION - PASTE YOUR GITHUB TOKEN DIRECTLY BELOW
+# ============================================================
+GITHUB_TOKEN = "PASTE_YOUR_GITHUB_PAT_HERE"
+
+REPO_OWNER = "jm1d22"
+REPO_NAME = "ColourableZebra3D"
+BRANCH = "main"
+# ============================================================
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+COUNTER_FILE = SCRIPT_DIR / ".texture_counter"
+
+
+def get_next_texture_filename() -> str:
+    """Reads a local counter file to generate sequential texture names (e.g., Texture_0001.jpg)."""
+    count = 1
+    if COUNTER_FILE.exists():
+        try:
+            with open(COUNTER_FILE, "r") as f:
+                count = int(f.read().strip()) + 1
+        except ValueError:
+            count = 1
+
+    with open(COUNTER_FILE, "w") as f:
+        f.write(str(count))
+
+    return f"Texture_{count:04d}.jpg"
+
 
 def capture_photo_from_webcam(save_path: Path) -> bool:
     """Opens a live webcam preview window. Press Spacebar to take photo, ESC to quit."""
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # 0 for primary camera
-    
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
@@ -27,9 +61,16 @@ def capture_photo_from_webcam(save_path: Path) -> bool:
             break
 
         preview_frame = frame.copy()
-        cv2.putText(preview_frame, "Press SPACE to Capture | ESC to Exit", 
-                    (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        
+        cv2.putText(
+            preview_frame,
+            "Press SPACE to Capture | ESC to Exit",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+        )
+
         cv2.imshow("Capture Coloring Sheet", preview_frame)
 
         key = cv2.waitKey(1) & 0xFF
@@ -47,54 +88,99 @@ def capture_photo_from_webcam(save_path: Path) -> bool:
     cv2.destroyAllWindows()
     return captured
 
+
+def upload_texture_to_github(
+    local_jpg_path: Path,
+    remote_filename: str,
+    commit_msg: str = "Upload scanned zebra texture",
+):
+    """Uploads or updates a .jpg texture file directly in docs/assets/textures/ on GitHub via API."""
+    if not GITHUB_TOKEN or GITHUB_TOKEN == "PASTE_YOUR_GITHUB_PAT_HERE":
+        print(
+            "[WARNING] GITHUB_TOKEN is not set in the script. Skipping auto-upload."
+        )
+        return
+
+    remote_path = f"docs/assets/textures/{remote_filename}"
+    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{remote_path}"
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    with open(local_jpg_path, "rb") as img_file:
+        encoded_content = base64.b64encode(img_file.read()).decode("utf-8")
+
+    get_res = requests.get(url, headers=headers)
+    sha = get_res.json().get("sha") if get_res.status_code == 200 else None
+
+    payload = {
+        "message": commit_msg,
+        "content": encoded_content,
+        "branch": BRANCH,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    response = requests.put(url, headers=headers, json=payload)
+
+    if response.status_code in [200, 201]:
+        print(f"[SUCCESS] Texture uploaded to GitHub repository: {remote_path}")
+        print(f"Commit URL: {response.json()['commit']['html_url']}")
+    else:
+        print(
+            f"[ERROR] GitHub upload failed ({response.status_code}): {response.json()}"
+        )
+
+
 def process_zebra_textures():
-    # 1. Resolve local directories relative to script location
-    script_dir = Path(__file__).resolve().parent
-    main_dir = script_dir.parent
-    
-    assets_image_dir = main_dir / "assets" / "image"
-    assets_textures_dir = main_dir / "assets" / "textures"
-    
+    assets_image_dir = PROJECT_ROOT / "assets" / "image"
+    assets_textures_dir = PROJECT_ROOT / "assets" / "textures"
+
     assets_image_dir.mkdir(parents=True, exist_ok=True)
     assets_textures_dir.mkdir(parents=True, exist_ok=True)
 
     captured_image_path = assets_image_dir / "captured_coloring_sheet.jpg"
 
-    # 2. Open camera pop-up to take picture
     success = capture_photo_from_webcam(captured_image_path)
     if not success:
         return
 
-    # 3. Define 2K texture output path
-    output_2k_path = assets_textures_dir / "Zebra2K.jpg"
+    # Generate sequential filename (Texture_0001.jpg, Texture_0002.jpg, etc.)
+    sequential_filename = get_next_texture_filename()
+    output_2k_path = assets_textures_dir / sequential_filename
 
-    # 4. Read captured photo
     img = cv2.imread(str(captured_image_path))
     if img is None:
-        raise FileNotFoundError(f"Failed to load image from {captured_image_path}")
+        raise FileNotFoundError(
+            f"Failed to load image from {captured_image_path}"
+        )
 
-    # 5. Setup Original ArUco Detector
-    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_ARUCO_ORIGINAL)
+    aruco_dict = cv2.aruco.getPredefinedDictionary(
+        cv2.aruco.DICT_ARUCO_ORIGINAL
+    )
     aruco_params = cv2.aruco.DetectorParameters()
     aruco_params.adaptiveThreshWinSizeMin = 3
     aruco_params.adaptiveThreshWinSizeMax = 23
     aruco_params.adaptiveThreshWinSizeStep = 10
-    
+
     detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
 
-    # 6. Detect markers
     corners, ids, _ = detector.detectMarkers(img)
     if ids is None:
-        raise ValueError("No ArUco markers detected in the captured photo. Make sure all 4 tags are visible.")
+        raise ValueError(
+            "No ArUco markers detected in the captured photo. Make sure all 4 tags are visible."
+        )
 
     ids = ids.flatten()
 
-    # 7. Map center coordinates for 101x101px tags on a 2048x2048 square
     target_centers = {
-        1: [50.0, 50.0],       # Top-Left
-        2: [1997.0, 50.0],     # Top-Right
-        3: [50.0, 1997.0],     # Bottom-Left
-        4: [1997.0, 1997.0]    # Bottom-Right
+        1: [50.0, 50.0],
+        2: [1997.0, 50.0],
+        3: [50.0, 1997.0],
+        4: [1997.0, 1997.0],
     }
 
     src_pts = []
@@ -102,7 +188,9 @@ def process_zebra_textures():
 
     for marker_id in [1, 2, 3, 4]:
         if marker_id not in ids:
-            raise ValueError(f"Missing Marker ID {marker_id} in photo. Detected IDs: {list(ids)}")
+            raise ValueError(
+                f"Missing Marker ID {marker_id} in photo. Detected IDs: {list(ids)}"
+            )
 
         idx = np.where(ids == marker_id)[0][0]
         marker_corners = corners[idx][0]
@@ -116,16 +204,25 @@ def process_zebra_textures():
     src_pts = np.float32(src_pts)
     dst_pts = np.float32(dst_pts)
 
-    # 8. Unwarp Perspective to 2048x2048 (2K Texture)
     matrix, _ = cv2.findHomography(src_pts, dst_pts)
-    texture_2k = cv2.warpPerspective(img, matrix, (2048, 2048), flags=cv2.INTER_LANCZOS4)
+    texture_2k = cv2.warpPerspective(
+        img, matrix, (2048, 2048), flags=cv2.INTER_LANCZOS4
+    )
 
-    # 9. Save 2K texture file to assets/textures/
-    cv2.imwrite(str(output_2k_path), texture_2k, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    cv2.imwrite(
+        str(output_2k_path), texture_2k, [cv2.IMWRITE_JPEG_QUALITY, 95]
+    )
 
     print("\n" + "=" * 60)
-    print(f"[SUCCESS] 2K Texture Saved: {output_2k_path}")
+    print(f"[SUCCESS] Local 2K Texture Saved: {output_2k_path}")
     print("=" * 60)
+
+    upload_texture_to_github(
+        local_jpg_path=output_2k_path,
+        remote_filename=sequential_filename,
+        commit_msg=f"Auto-upload scanned texture {sequential_filename}",
+    )
+
 
 if __name__ == "__main__":
     process_zebra_textures()
