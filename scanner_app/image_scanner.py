@@ -8,7 +8,7 @@ from pathlib import Path
 # ============================================================
 # CONFIGURATION - PASTE YOUR GITHUB TOKEN DIRECTLY BELOW
 # ============================================================
-GITHUB_TOKEN = "PASTE_YOUR_GITHUB_PAT_HERE"
+GITHUB_TOKEN = "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"
 
 REPO_OWNER = "jm1d22"
 REPO_NAME = "ColourableZebra3D"
