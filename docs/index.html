@@ -7,16 +7,65 @@
     <script src="https://cdn.babylonjs.com/babylon.js"></script>
     <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; display: flex; font-family: sans-serif; background: #1a1a1a; color: #fff; }
-        #sidebar { width: 320px; padding: 20px; background: #252525; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; gap: 15px; }
-        #renderCanvas { flex: 1; height: 100vh; touch-action: none; outline: none; }
-        input, select, button { width: 100%; padding: 10px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; }
-        button { cursor: pointer; font-weight: bold; background: #007acc; border: none; }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            font-family: sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        #sidebar {
+            width: 320px;
+            padding: 20px;
+            background: #252525;
+            height: 100%;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 10;
+        }
+        #renderCanvas {
+            flex: 1;
+            height: 100%;
+            display: block;
+            touch-action: none;
+            outline: none;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            cursor: pointer;
+            font-weight: bold;
+            background: #007acc;
+            border: none;
+        }
         button:hover { background: #005999; }
         button.secondary { background: #444; }
         button.secondary:hover { background: #555; }
         .anim-group { display: flex; gap: 10px; }
-        #log { background: #000; font-family: monospace; font-size: 11px; padding: 10px; height: 120px; overflow-y: auto; color: #00ff00; border-radius: 4px; }
+        #log {
+            background: #000;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 10px;
+            height: 140px;
+            overflow-y: auto;
+            color: #00ff00;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
     </style>
 </head>
 <body>
@@ -52,12 +101,13 @@
     <script>
         const canvas = document.getElementById("renderCanvas");
         const engine = new BABYLON.Engine(canvas, true);
-        let scene, currentMesh = null, activeAnimGroup = null;
+        let scene, camera, loadedNodes = [], activeAnimGroup = null;
 
         // State variables
         let isHighPolyMode = false;
         let selectedZebraName = "";
         let availableZebras = [];
+        let isSpinning = true;
 
         function log(msg) {
             const l = document.getElementById("log");
@@ -69,7 +119,7 @@
             const s = new BABYLON.Scene(engine);
             s.clearColor = new BABYLON.Color4(0.1, 0.1, 0.1, 1.0);
 
-            const camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 3, new BABYLON.Vector3(0, 0.5, 0), s);
+            camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 3, new BABYLON.Vector3(0, 0, 0), s);
             camera.attachControl(canvas, true);
             camera.wheelPrecision = 50;
 
@@ -78,6 +128,15 @@
             const light2 = new BABYLON.DirectionalLight("light2", new BABYLON.Vector3(-1, -2, -1), s);
             light2.intensity = 0.8;
 
+            // Slow Turntable Rotation
+            s.registerBeforeRender(() => {
+                if (isSpinning && camera) {
+                    camera.alpha += 0.003;
+                }
+            });
+
+            canvas.addEventListener("pointerdown", () => { isSpinning = false; });
+
             return s;
         };
 
@@ -85,11 +144,9 @@
 
         async function fetchTexturesList() {
             try {
-                // Fetch list from repo contents API or fallback local array
                 const response = await fetch("https://api.github.com/repos/jm1d22/ColourableZebra3D/contents/docs/assets/textures");
                 const data = await response.json();
                 
-                // Filter out _HighPoly suffixes and extract base zebra names
                 const namesSet = new Set();
                 data.forEach(file => {
                     if (file.name.endsWith(".jpg") || file.name.endsWith(".png")) {
@@ -127,10 +184,9 @@
         }
 
         function loadModelAndTexture() {
-            if (currentMesh) {
-                currentMesh.dispose();
-                currentMesh = null;
-            }
+            loadedNodes.forEach(node => node.dispose());
+            loadedNodes = [];
+
             if (activeAnimGroup) {
                 activeAnimGroup.stop();
                 activeAnimGroup = null;
@@ -141,33 +197,66 @@
             
             log(`Loading ${modelFile}...`);
 
-            BABYLON.SceneLoader.ImportMesh("", "./assets/model/", `${modelFile}?v=${Date.now()}`, scene, function (meshes, particleSystems, skeletons, animationGroups) {
-                currentMesh = meshes[0];
-                log(`Loaded ${modelFile} successfully.`);
+            BABYLON.SceneLoader.ImportMesh(
+                "",
+                "./assets/model/",
+                modelFile,
+                scene,
+                function (meshes, particleSystems, skeletons, animationGroups) {
+                    loadedNodes = meshes;
+                    log(`Loaded ${modelFile} successfully.`);
 
-                // Handle Animations if High-Poly mode
-                const animControls = document.getElementById("animControls");
-                if (isHighPolyMode && animationGroups && animationGroups.length > 0) {
-                    animControls.style.display = "block";
-                    activeAnimGroup = animationGroups[0];
-                    activeAnimGroup.play(true);
-                } else {
-                    animControls.style.display = "none";
-                }
+                    // Center of Volume Framing
+                    let min = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+                    let max = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
+                    let validMeshFound = false;
 
-                // Apply Baked / Original Texture
-                const texturePath = `./assets/textures/${textureFile}?v=${Date.now()}`;
-                const mat = new BABYLON.StandardMaterial("zebraMat", scene);
-                mat.diffuseTexture = new BABYLON.Texture(texturePath, scene);
-                mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+                    meshes.forEach(m => {
+                        if (m.getTotalVertices && m.getTotalVertices() > 0) {
+                            m.computeWorldMatrix(true);
+                            const bounds = m.getBoundingInfo().boundingBox;
+                            min = BABYLON.Vector3.Minimize(min, bounds.minimumWorld);
+                            max = BABYLON.Vector3.Maximize(max, bounds.maximumWorld);
+                            validMeshFound = true;
+                        }
+                    });
 
-                meshes.forEach(m => {
-                    if (m.material) {
-                        m.material = mat;
+                    if (validMeshFound) {
+                        const center = BABYLON.Vector3.Center(min, max);
+                        const distance = BABYLON.Vector3.Distance(min, max);
+
+                        camera.setTarget(center);
+                        camera.radius = distance * 1.6;
                     }
-                });
-                log(`Applied texture: ${textureFile}`);
-            });
+
+                    // Handle Animations for High-Poly mode
+                    const animControls = document.getElementById("animControls");
+                    if (isHighPolyMode && animationGroups && animationGroups.length > 0) {
+                        animControls.style.display = "block";
+                        activeAnimGroup = animationGroups[0];
+                        activeAnimGroup.play(true);
+                    } else {
+                        animControls.style.display = "none";
+                    }
+
+                    // Apply Swapped Texture
+                    const texturePath = `./assets/textures/${textureFile}?v=${Date.now()}`;
+                    const mat = new BABYLON.StandardMaterial("zebraMat", scene);
+                    mat.diffuseTexture = new BABYLON.Texture(texturePath, scene);
+                    mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+                    meshes.forEach(m => {
+                        if (m.getTotalVertices && m.getTotalVertices() > 0) {
+                            m.material = mat;
+                        }
+                    });
+                    log(`Applied texture: ${textureFile}`);
+                },
+                null,
+                function (scene, message, exception) {
+                    log(`[ERROR] Failed to load ${modelFile}: ${message}`);
+                }
+            );
         }
 
         // Event Listeners
