@@ -68,6 +68,14 @@
         select:hover, button:hover {
             background: #444;
         }
+        .anim-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+        }
+        .anim-controls button {
+            flex: 1;
+        }
     </style>
     <!-- Babylon.js CDN Scripts -->
     <script src="https://cdn.babylonjs.com/babylon.js"></script>
@@ -82,11 +90,24 @@
         <input type="text" id="textureSearch" placeholder="Type Zebra name...">
 
         <label for="textureSelect" style="display:block; margin-top:10px;">Select your Zebra:</label>
-        <select id="textureSelect" size="5">
+        <select id="textureSelect" size="4">
             <option value="">Loading textures...</option>
         </select>
 
         <button id="refreshBtn">Refresh Texture List</button>
+
+        <hr style="border: 0; border-top: 1px solid #555; margin: 15px 0 10px 0;">
+
+        <!-- Animation Control UI -->
+        <label for="animSelect">Select Animation:</label>
+        <select id="animSelect">
+            <option value="">No Animations</option>
+        </select>
+
+        <div class="anim-controls">
+            <button id="playAnimBtn">Play</button>
+            <button id="pauseAnimBtn">Pause</button>
+        </div>
     </div>
 
     <!-- On-screen visual debug log -->
@@ -103,6 +124,10 @@
         let activeMaterial = null;
         let allTexturesList = [];
         let camera = null;
+        
+        // Animation State Trackers
+        let loadedAnimationGroups = [];
+        let activeAnimGroup = null;
 
         // Custom Debug Logger
         function debugLog(msg, isError = false) {
@@ -132,8 +157,8 @@
 
             // Auto-rotation setup
             camera.useAutoRotationBehavior = true;
-            camera.autoRotationBehavior.idleRotationSpeed = 0.2; // Slow rotation speed
-            camera.autoRotationBehavior.idleRotationWaitTime = 3000; // Wait 3s after user interaction to resume
+            camera.autoRotationBehavior.idleRotationSpeed = 0.2;
+            camera.autoRotationBehavior.idleRotationWaitTime = 3000;
             camera.autoRotationBehavior.idleRotationSpinUpTime = 2000;
 
             // Lights
@@ -148,40 +173,61 @@
             activeMaterial.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
             activeMaterial.backFaceCulling = false;
 
-            debugLog("Loading Zebra 3D Model...");
+            debugLog("Loading HighPolyZebraAnim.gltf...");
 
-            // Load Zebra 3D Model
-            BABYLON.SceneLoader.ImportMesh("", "./assets/model/", "ZebraModel.gltf", scene, function (meshes) {
-                zebraMeshes = meshes;
-                debugLog(`Model loaded with ${meshes.length} mesh elements.`);
+            // Load Zebra 3D Model with Animation Support
+            BABYLON.SceneLoader.ImportMesh(
+                "", 
+                "./assets/model/", 
+                "HighPolyZebraAnim.gltf", 
+                scene, 
+                function (meshes, particleSystems, skeletons, animationGroups) {
+                    zebraMeshes = meshes;
+                    loadedAnimationGroups = animationGroups;
+                    debugLog(`Model loaded with ${meshes.length} mesh elements.`);
 
-                // Calculate bounding volume center across all sub-meshes
-                let minVector = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
-                let maxVector = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
-                let appliedCount = 0;
-
-                meshes.forEach((mesh) => {
-                    if (mesh.getTotalVertices && mesh.getTotalVertices() > 0) {
-                        mesh.material = activeMaterial;
-                        appliedCount++;
-
-                        const bounds = mesh.getBoundingInfo().boundingBox;
-                        minVector = BABYLON.Vector3.Minimize(minVector, bounds.minimumWorld);
-                        maxVector = BABYLON.Vector3.Maximize(maxVector, bounds.maximumWorld);
+                    // Setup and Bind Animations
+                    if (animationGroups && animationGroups.length > 0) {
+                        debugLog(`Found ${animationGroups.length} animation track(s).`);
+                        setupAnimationUI(animationGroups);
+                        
+                        // Play the first animation group by default in loop
+                        activeAnimGroup = animationGroups[0];
+                        activeAnimGroup.play(true);
+                    } else {
+                        debugLog("No animated tracks detected in glTF.");
                     }
-                });
 
-                // Compute center of volume and target camera directly to it
-                const centerOfVolume = BABYLON.Vector3.Center(minVector, maxVector);
-                camera.target = centerOfVolume;
+                    // Calculate bounding volume center across all sub-meshes
+                    let minVector = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+                    let maxVector = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
+                    let appliedCount = 0;
 
-                debugLog(`Material bound to ${appliedCount} sub-mesh target(s). Center set at [${centerOfVolume.x.toFixed(2)}, ${centerOfVolume.y.toFixed(2)}, ${centerOfVolume.z.toFixed(2)}]`);
+                    meshes.forEach((mesh) => {
+                        if (mesh.getTotalVertices && mesh.getTotalVertices() > 0) {
+                            mesh.material = activeMaterial;
+                            appliedCount++;
 
-                // Initial fetch after model is ready
-                fetchTextureList();
-            }, null, function (scene, message, exception) {
-                debugLog(`Model load error: ${message}`, true);
-            });
+                            const bounds = mesh.getBoundingInfo().boundingBox;
+                            minVector = BABYLON.Vector3.Minimize(minVector, bounds.minimumWorld);
+                            maxVector = BABYLON.Vector3.Maximize(maxVector, bounds.maximumWorld);
+                        }
+                    });
+
+                    // Compute center of volume and target camera directly to it
+                    const centerOfVolume = BABYLON.Vector3.Center(minVector, maxVector);
+                    camera.target = centerOfVolume;
+
+                    debugLog(`Material bound to ${appliedCount} sub-mesh target(s). Center set at [${centerOfVolume.x.toFixed(2)}, ${centerOfVolume.y.toFixed(2)}, ${centerOfVolume.z.toFixed(2)}]`);
+
+                    // Initial fetch after model is ready
+                    fetchTextureList();
+                }, 
+                null, 
+                function (scene, message, exception) {
+                    debugLog(`Model load error: ${message}`, true);
+                }
+            );
 
             return scene;
         };
@@ -195,6 +241,19 @@
         window.addEventListener("resize", function () {
             engine.resize();
         });
+
+        // Setup Animation Selection Dropdown UI
+        function setupAnimationUI(groups) {
+            const animSelectEl = document.getElementById("animSelect");
+            animSelectEl.innerHTML = "";
+
+            groups.forEach((group, index) => {
+                const option = document.createElement("option");
+                option.value = index;
+                option.textContent = group.name || `Track ${index + 1}`;
+                animSelectEl.appendChild(option);
+            });
+        }
 
         // Function to convert API URLs to CORS-friendly Raw URLs
         function getRawImageUrl(file) {
@@ -290,7 +349,7 @@
             }
         }
 
-        // Search Filter Event Listener
+        // Event Listeners for Textures
         document.getElementById("textureSearch").addEventListener("input", (e) => {
             const query = e.target.value.toLowerCase().trim();
             const filtered = allTexturesList.filter(item => item.name.toLowerCase().includes(query));
@@ -304,6 +363,33 @@
         });
 
         document.getElementById("refreshBtn").addEventListener("click", fetchTextureList);
+
+        // Event Listeners for Animations
+        document.getElementById("animSelect").addEventListener("change", (e) => {
+            const selectedIndex = parseInt(e.target.value);
+            if (!isNaN(selectedIndex) && loadedAnimationGroups[selectedIndex]) {
+                if (activeAnimGroup) {
+                    activeAnimGroup.stop();
+                }
+                activeAnimGroup = loadedAnimationGroups[selectedIndex];
+                activeAnimGroup.play(true);
+                debugLog(`Switched animation to: ${activeAnimGroup.name}`);
+            }
+        });
+
+        document.getElementById("playAnimBtn").addEventListener("click", () => {
+            if (activeAnimGroup && !activeAnimGroup.isPlaying) {
+                activeAnimGroup.play(true);
+                debugLog("Animation playing.");
+            }
+        });
+
+        document.getElementById("pauseAnimBtn").addEventListener("click", () => {
+            if (activeAnimGroup && activeAnimGroup.isPlaying) {
+                activeAnimGroup.pause();
+                debugLog("Animation paused.");
+            }
+        });
     </script>
 </body>
 </html>
