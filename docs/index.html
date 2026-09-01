@@ -101,9 +101,13 @@
     <script>
         const canvas = document.getElementById("renderCanvas");
         const engine = new BABYLON.Engine(canvas, true);
-        let scene, camera, loadedNodes = [], activeAnimGroup = null;
+        let scene, camera;
+        
+        let currentAssetContainer = null;
+        let currentMaterial = null;
+        let activeAnimGroup = null;
+        let currentLoadTaskId = 0;
 
-        // State variables
         let isHighPolyMode = false;
         let selectedZebraName = "";
         let availableZebras = [];
@@ -119,7 +123,7 @@
             const s = new BABYLON.Scene(engine);
             s.clearColor = new BABYLON.Color4(0.1, 0.1, 0.1, 1.0);
 
-            camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 3, new BABYLON.Vector3(0, 0, 0), s);
+            camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 2.1, 3.5, BABYLON.Vector3.Zero(), s);
             camera.attachControl(canvas, true);
             camera.wheelPrecision = 50;
 
@@ -128,7 +132,6 @@
             const light2 = new BABYLON.DirectionalLight("light2", new BABYLON.Vector3(-1, -2, -1), s);
             light2.intensity = 0.8;
 
-            // Slow Turntable Rotation
             s.registerBeforeRender(() => {
                 if (isSpinning && camera) {
                     camera.alpha += 0.003;
@@ -141,6 +144,37 @@
         };
 
         scene = createScene();
+
+        function clearCurrentModel() {
+            if (scene) {
+                [...scene.animationGroups].forEach(ag => {
+                    ag.stop();
+                    ag.dispose();
+                });
+            }
+            activeAnimGroup = null;
+
+            if (currentMaterial) {
+                currentMaterial.dispose(true, true);
+                currentMaterial = null;
+            }
+
+            if (currentAssetContainer) {
+                try {
+                    currentAssetContainer.removeAllFromScene();
+                    currentAssetContainer.dispose();
+                } catch (e) {
+                    console.warn("Container cleanup error:", e);
+                }
+                currentAssetContainer = null;
+            }
+
+            if (scene) {
+                [...scene.meshes].forEach(m => m.dispose(false, true));
+                [...scene.transformNodes].forEach(tn => tn.dispose(false, true));
+                [...scene.skeletons].forEach(sk => sk.dispose());
+            }
+        }
 
         async function fetchTexturesList() {
             try {
@@ -184,79 +218,97 @@
         }
 
         function loadModelAndTexture() {
-            loadedNodes.forEach(node => node.dispose());
-            loadedNodes = [];
+            currentLoadTaskId++;
+            const taskId = currentLoadTaskId;
 
-            if (activeAnimGroup) {
-                activeAnimGroup.stop();
-                activeAnimGroup = null;
-            }
+            clearCurrentModel();
 
             const modelFile = isHighPolyMode ? "ZebraModel_HighPoly.gltf" : "ZebraModel.gltf";
             const textureFile = isHighPolyMode ? `${selectedZebraName}_HighPoly.png` : `${selectedZebraName}.jpg`;
             
             log(`Loading ${modelFile}...`);
 
-            BABYLON.SceneLoader.ImportMesh(
-                "",
-                "./assets/model/",
-                modelFile,
-                scene,
-                function (meshes, particleSystems, skeletons, animationGroups) {
-                    loadedNodes = meshes;
-                    log(`Loaded ${modelFile} successfully.`);
+            BABYLON.SceneLoader.LoadAssetContainer("./assets/model/", modelFile, scene, function (container) {
+                if (taskId !== currentLoadTaskId) {
+                    container.removeAllFromScene();
+                    container.dispose();
+                    return;
+                }
 
-                    // Center of Volume Framing
-                    let min = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
-                    let max = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
-                    let validMeshFound = false;
+                clearCurrentModel();
 
-                    meshes.forEach(m => {
+                currentAssetContainer = container;
+                container.addAllToScene();
+                log(`Loaded ${modelFile} successfully.`);
+
+                scene.updateTransformMatrix(true);
+
+                let min = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+                let max = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
+                let validFound = false;
+
+                // Calculate framing bounds using Skeleton Bones or Mesh Bounding Boxes
+                if (container.skeletons && container.skeletons.length > 0) {
+                    container.skeletons.forEach(sk => {
+                        sk.computeAbsoluteTransforms();
+                        const targetMesh = container.meshes.find(m => m.skeleton === sk && m.getTotalVertices && m.getTotalVertices() > 0) || container.meshes[0];
+                        
+                        sk.bones.forEach(b => {
+                            const worldPos = targetMesh ? b.getAbsolutePosition(targetMesh) : b.getAbsolutePosition();
+                            min = BABYLON.Vector3.Minimize(min, worldPos);
+                            max = BABYLON.Vector3.Maximize(max, worldPos);
+                            validFound = true;
+                        });
+                    });
+                } else {
+                    container.meshes.forEach(m => {
                         if (m.getTotalVertices && m.getTotalVertices() > 0) {
                             m.computeWorldMatrix(true);
+                            m.refreshBoundingInfo(true);
                             const bounds = m.getBoundingInfo().boundingBox;
                             min = BABYLON.Vector3.Minimize(min, bounds.minimumWorld);
                             max = BABYLON.Vector3.Maximize(max, bounds.maximumWorld);
-                            validMeshFound = true;
+                            validFound = true;
                         }
                     });
-
-                    if (validMeshFound) {
-                        const center = BABYLON.Vector3.Center(min, max);
-                        const distance = BABYLON.Vector3.Distance(min, max);
-
-                        camera.setTarget(center);
-                        camera.radius = distance * 1.6;
-                    }
-
-                    // Handle Animations for High-Poly mode
-                    const animControls = document.getElementById("animControls");
-                    if (isHighPolyMode && animationGroups && animationGroups.length > 0) {
-                        animControls.style.display = "block";
-                        activeAnimGroup = animationGroups[0];
-                        activeAnimGroup.play(true);
-                    } else {
-                        animControls.style.display = "none";
-                    }
-
-                    // Apply Swapped Texture
-                    const texturePath = `./assets/textures/${textureFile}?v=${Date.now()}`;
-                    const mat = new BABYLON.StandardMaterial("zebraMat", scene);
-                    mat.diffuseTexture = new BABYLON.Texture(texturePath, scene);
-                    mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
-
-                    meshes.forEach(m => {
-                        if (m.getTotalVertices && m.getTotalVertices() > 0) {
-                            m.material = mat;
-                        }
-                    });
-                    log(`Applied texture: ${textureFile}`);
-                },
-                null,
-                function (scene, message, exception) {
-                    log(`[ERROR] Failed to load ${modelFile}: ${message}`);
                 }
-            );
+
+                if (validFound) {
+                    const center = BABYLON.Vector3.Center(min, max);
+                    const diagonal = BABYLON.Vector3.Distance(min, max);
+
+                    camera.setTarget(center);
+                    camera.radius = Math.max(diagonal * 1.8, 3.0);
+                    camera.beta = Math.PI / 2.1;
+                }
+
+                // Setup Animations
+                const animControls = document.getElementById("animControls");
+                if (isHighPolyMode && container.animationGroups && container.animationGroups.length > 0) {
+                    animControls.style.display = "block";
+                    activeAnimGroup = container.animationGroups[0];
+                    activeAnimGroup.play(true);
+                } else {
+                    animControls.style.display = "none";
+                }
+
+                // Apply Texture
+                const texturePath = `./assets/textures/${textureFile}?v=${Date.now()}`;
+                currentMaterial = new BABYLON.StandardMaterial("zebraMat", scene);
+                currentMaterial.diffuseTexture = new BABYLON.Texture(texturePath, scene);
+                currentMaterial.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+                container.meshes.forEach(m => {
+                    if (m.getTotalVertices && m.getTotalVertices() > 0) {
+                        m.material = currentMaterial;
+                    }
+                });
+                log(`Applied texture: ${textureFile}`);
+            }, null, function(scene, message) {
+                if (taskId === currentLoadTaskId) {
+                    log(`Error loading model: ${message}`);
+                }
+            });
         }
 
         // Event Listeners
