@@ -30,7 +30,24 @@
             border-radius: 8px;
             max-width: 300px;
         }
-        select, button {
+        #debug-console {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.85);
+            color: #00ff00;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 10px;
+            border-radius: 6px;
+            max-width: 400px;
+            max-height: 120px;
+            overflow-y: auto;
+            pointer-events: none;
+            border: 1px solid #333;
+        }
+        input[type="text"], select, button {
             width: 100%;
             padding: 10px;
             margin-top: 10px;
@@ -39,7 +56,14 @@
             border: 1px solid #555;
             border-radius: 4px;
             font-size: 14px;
+            box-sizing: border-box;
+        }
+        select, button {
             cursor: pointer;
+        }
+        input[type="text"]:focus {
+            outline: 1px solid #007acc;
+            background: #3b3b3b;
         }
         select:hover, button:hover {
             background: #444;
@@ -53,12 +77,20 @@
 
     <div id="ui-container">
         <h2 style="margin: 0 0 10px 0; font-size: 18px;">Zebra Texture Viewer</h2>
-        <label for="textureSelect">Select Scanned Texture:</label>
-        <select id="textureSelect">
+        
+        <label for="textureSearch">Search Textures:</label>
+        <input type="text" id="textureSearch" placeholder="Type Zebra name...">
+
+        <label for="textureSelect" style="display:block; margin-top:10px;">Select your Zebra:</label>
+        <select id="textureSelect" size="5">
             <option value="">Loading textures...</option>
         </select>
+
         <button id="refreshBtn">Refresh Texture List</button>
     </div>
+
+    <!-- On-screen visual debug log -->
+    <div id="debug-console">System initialized. Waiting for 3D model...</div>
 
     <canvas id="renderCanvas"></canvas>
 
@@ -67,8 +99,22 @@
         const REPO_NAME = "ColourableZebra3D";
         const TEXTURE_DIR_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/docs/assets/textures`;
         
-        let zebraMesh = null;
+        let zebraMeshes = [];
         let activeMaterial = null;
+        let allTexturesList = [];
+        let camera = null;
+
+        // Custom Debug Logger
+        function debugLog(msg, isError = false) {
+            console.log(msg);
+            const consoleEl = document.getElementById("debug-console");
+            if (consoleEl) {
+                const timestamp = new Date().toLocaleTimeString();
+                const color = isError ? "#ff4444" : "#00ff00";
+                consoleEl.innerHTML += `<br><span style="color:${color}">[${timestamp}] ${msg}</span>`;
+                consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+        }
 
         // Initialize Babylon.js Scene
         const canvas = document.getElementById("renderCanvas");
@@ -79,29 +125,62 @@
             scene.clearColor = new BABYLON.Color4(0.1, 0.1, 0.1, 1);
 
             // Camera setup
-            const camera = new BABYLON.ArcRotateCamera("Camera", Math.PI / 2, Math.PI / 3, 15, BABYLON.Vector3.Zero(), scene);
+            camera = new BABYLON.ArcRotateCamera("Camera", Math.PI / 2, Math.PI / 3, 15, BABYLON.Vector3.Zero(), scene);
             camera.attachControl(canvas, true);
-            camera.lowerRadiusLimit = 5;
-            camera.upperRadiusLimit = 30;
+            camera.lowerRadiusLimit = 2;
+            camera.upperRadiusLimit = 40;
 
-            // Hemisphere and Directional Lights
+            // Auto-rotation setup
+            camera.useAutoRotationBehavior = true;
+            camera.autoRotationBehavior.idleRotationSpeed = 0.2; // Slow rotation speed
+            camera.autoRotationBehavior.idleRotationWaitTime = 3000; // Wait 3s after user interaction to resume
+            camera.autoRotationBehavior.idleRotationSpinUpTime = 2000;
+
+            // Lights
             const hemiLight = new BABYLON.HemisphericLight("hemiLight", new BABYLON.Vector3(0, 1, 0), scene);
-            hemiLight.intensity = 0.8;
+            hemiLight.intensity = 1.0;
 
             const dirLight = new BABYLON.DirectionalLight("dirLight", new BABYLON.Vector3(-1, -2, -1), scene);
-            dirLight.intensity = 0.5;
+            dirLight.intensity = 0.6;
 
-            // Base Material
+            // Material Base Setup
             activeMaterial = new BABYLON.StandardMaterial("zebraMat", scene);
             activeMaterial.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+            activeMaterial.backFaceCulling = false;
+
+            debugLog("Loading Zebra 3D Model...");
 
             // Load Zebra 3D Model
             BABYLON.SceneLoader.ImportMesh("", "./assets/model/", "ZebraModel.gltf", scene, function (meshes) {
-                if (meshes.length > 0) {
-                    zebraMesh = meshes[0];
-                    zebraMesh.material = activeMaterial;
-                    camera.target = zebraMesh.position;
-                }
+                zebraMeshes = meshes;
+                debugLog(`Model loaded with ${meshes.length} mesh elements.`);
+
+                // Calculate bounding volume center across all sub-meshes
+                let minVector = new BABYLON.Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+                let maxVector = new BABYLON.Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
+                let appliedCount = 0;
+
+                meshes.forEach((mesh) => {
+                    if (mesh.getTotalVertices && mesh.getTotalVertices() > 0) {
+                        mesh.material = activeMaterial;
+                        appliedCount++;
+
+                        const bounds = mesh.getBoundingInfo().boundingBox;
+                        minVector = BABYLON.Vector3.Minimize(minVector, bounds.minimumWorld);
+                        maxVector = BABYLON.Vector3.Maximize(maxVector, bounds.maximumWorld);
+                    }
+                });
+
+                // Compute center of volume and target camera directly to it
+                const centerOfVolume = BABYLON.Vector3.Center(minVector, maxVector);
+                camera.target = centerOfVolume;
+
+                debugLog(`Material bound to ${appliedCount} sub-mesh target(s). Center set at [${centerOfVolume.x.toFixed(2)}, ${centerOfVolume.y.toFixed(2)}, ${centerOfVolume.z.toFixed(2)}]`);
+
+                // Initial fetch after model is ready
+                fetchTextureList();
+            }, null, function (scene, message, exception) {
+                debugLog(`Model load error: ${message}`, true);
             });
 
             return scene;
@@ -117,58 +196,114 @@
             engine.resize();
         });
 
-        // Function to apply dynamic texture to 3D model
-        function applyTexture(textureUrl) {
-            if (activeMaterial && textureUrl) {
-                activeMaterial.diffuseTexture = new BABYLON.Texture(textureUrl, scene);
+        // Function to convert API URLs to CORS-friendly Raw URLs
+        function getRawImageUrl(file) {
+            if (file.download_url) {
+                return file.download_url;
             }
+            return `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/docs/assets/textures/${file.name}`;
         }
 
-        // Fetch textures dynamically from GitHub repository contents API
+        // Apply dynamic texture to 3D model
+        function applyTexture(textureUrl) {
+            if (!activeMaterial || !textureUrl) return;
+
+            debugLog(`Applying texture: ${textureUrl.split('/').pop()}`);
+
+            if (activeMaterial.diffuseTexture) {
+                activeMaterial.diffuseTexture.dispose();
+            }
+
+            const newTexture = new BABYLON.Texture(textureUrl, scene, false, false, BABYLON.Texture.TRILINEAR_SAMPLINGMODE, () => {
+                debugLog("Texture successfully rendered on model!");
+            }, (message) => {
+                debugLog(`Texture render failure: ${message}`, true);
+            });
+
+            activeMaterial.diffuseTexture = newTexture;
+        }
+
+        // Render search results in the dropdown
+        function renderTextureDropdown(textures) {
+            const selectEl = document.getElementById("textureSelect");
+            selectEl.innerHTML = "";
+
+            if (textures.length === 0) {
+                selectEl.innerHTML = "<option value=''>No matching textures found</option>";
+                return;
+            }
+
+            textures.forEach(file => {
+                const option = document.createElement("option");
+                option.value = file.url;
+                option.textContent = file.name;
+                selectEl.appendChild(option);
+            });
+        }
+
+        // Fetch textures dynamically from GitHub API (with local fallback)
         async function fetchTextureList() {
             const selectEl = document.getElementById("textureSelect");
             selectEl.innerHTML = "<option>Fetching textures...</option>";
+            debugLog("Fetching texture list...");
 
             try {
                 const response = await fetch(TEXTURE_DIR_API);
-                if (!response.ok) throw new Error("No textures found or directory empty.");
+                
+                if (!response.ok) {
+                    throw new Error(`GitHub API Status ${response.status}`);
+                }
                 
                 const files = await response.json();
-                const jpgFiles = files.filter(file => file.name.endsWith('.jpg') || file.name.endsWith('.png'));
-
-                selectEl.innerHTML = "";
+                const jpgFiles = files.filter(file => file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.png'));
 
                 if (jpgFiles.length === 0) {
+                    debugLog("No textures found in repository folder.", true);
                     selectEl.innerHTML = "<option>No textures uploaded yet</option>";
                     return;
                 }
 
                 jpgFiles.reverse(); // Show latest uploaded texture first
+                
+                allTexturesList = jpgFiles.map(file => ({
+                    name: file.name,
+                    url: getRawImageUrl(file)
+                }));
 
-                jpgFiles.forEach(file => {
-                    const option = document.createElement("option");
-                    option.value = file.download_url;
-                    option.textContent = file.name;
-                    selectEl.appendChild(option);
-                });
+                debugLog(`Found ${allTexturesList.length} textures.`);
+                renderTextureDropdown(allTexturesList);
 
-                // Automatically load top texture
-                applyTexture(jpgFiles[0].download_url);
+                // Auto select top texture
+                if (allTexturesList.length > 0) {
+                    selectEl.selectedIndex = 0;
+                    applyTexture(allTexturesList[0].url);
+                }
 
             } catch (err) {
-                console.error(err);
-                selectEl.innerHTML = "<option>Error loading textures</option>";
+                debugLog(`API Error (${err.message}). Trying local fallback...`, true);
+                
+                const localFallback = "./assets/textures/Texture_0001.jpg";
+                allTexturesList = [{ name: "Texture_0001.jpg (Local)", url: localFallback }];
+                renderTextureDropdown(allTexturesList);
+                selectEl.selectedIndex = 0;
+                applyTexture(localFallback);
             }
         }
 
+        // Search Filter Event Listener
+        document.getElementById("textureSearch").addEventListener("input", (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            const filtered = allTexturesList.filter(item => item.name.toLowerCase().includes(query));
+            renderTextureDropdown(filtered);
+        });
+
         document.getElementById("textureSelect").addEventListener("change", (e) => {
-            applyTexture(e.target.value);
+            if (e.target.value) {
+                applyTexture(e.target.value);
+            }
         });
 
         document.getElementById("refreshBtn").addEventListener("click", fetchTextureList);
-
-        // Initial fetch on page load
-        fetchTextureList();
     </script>
 </body>
 </html>
