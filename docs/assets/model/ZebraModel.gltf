@@ -15,18 +15,7 @@
 	"nodes":[
 		{
 			"mesh":0,
-			"name":"Plane002",
-			"rotation":[
-				0.5,
-				-0.5,
-				0.5000000596046448,
-				0.4999999701976776
-			],
-			"translation":[
-				-5.511706352233887,
-				4.892055988311768,
-				-1.9926342964172363
-			]
+			"name":"BlockyZebra"
 		}
 	],
 	"meshes":[
@@ -48,29 +37,29 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":530,
+			"count":470,
 			"max":[
-				5.403881072998047,
-				1.2370502948760986,
-				3.922971248626709
+				0.03859684243798256,
+				0.26237964630126953,
+				0.3168881833553314
 			],
 			"min":[
-				-5.6393327713012695,
-				-1.4723153114318848,
-				-4.068052291870117
+				-0.1159810721874237,
+				-0.1935335099697113,
+				-0.31316202878952026
 			],
 			"type":"VEC3"
 		},
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":530,
+			"count":470,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":530,
+			"count":470,
 			"type":"VEC2"
 		},
 		{
@@ -83,32 +72,32 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":6360,
+			"byteLength":5640,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":6360,
-			"byteOffset":6360,
+			"byteLength":5640,
+			"byteOffset":5640,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4240,
-			"byteOffset":12720,
+			"byteLength":3760,
+			"byteOffset":11280,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":1824,
-			"byteOffset":16960,
+			"byteOffset":15040,
 			"target":34963
 		}
 	],
 	"buffers":[
 		{
-			"byteLength":18784,
+			"byteLength":16864,
 			"uri":"ZebraModel.bin"
 		}
 	]
