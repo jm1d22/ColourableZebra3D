@@ -20,6 +20,7 @@
         }
         #sidebar {
             width: 320px;
+            flex: 0 0 320px;
             padding: 20px;
             background: #252525;
             height: 100%;
@@ -30,7 +31,8 @@
             z-index: 10;
         }
         #renderCanvas {
-            flex: 1;
+            flex: 1 1 0;
+            min-width: 0;
             height: 100%;
             display: block;
             touch-action: none;
@@ -54,8 +56,6 @@
         button:hover { background: #005999; }
         button.secondary { background: #444; }
         button.secondary:hover { background: #555; }
-        button.debug { background: #d9534f; }
-        button.debug:hover { background: #c9302c; }
         .anim-group { display: flex; gap: 10px; }
         #log {
             background: #000;
@@ -86,7 +86,7 @@
         </div>
 
         <button id="toggleModelBtn" class="secondary">Mode: Low-Poly (Static)</button>
-        <button id="debugBtn" class="debug">Debug Model Bounds & Center</button>
+        <button id="refreshBtn" class="secondary">Refresh Zebra List</button>
 
         <div id="animControls" style="display: none;">
             <label>Animation Controls:</label>
@@ -115,9 +115,6 @@
         let selectedZebraName = "";
         let availableZebras = [];
         let isSpinning = true;
-
-        let debugMeshes = [];
-        let currentBounds = { min: null, max: null, center: null };
 
         function log(msg) {
             const l = document.getElementById("log");
@@ -156,14 +153,7 @@
 
         scene = createScene();
 
-        function clearDebugHelpers() {
-            debugMeshes.forEach(m => m.dispose());
-            debugMeshes = [];
-        }
-
         function clearCurrentModel() {
-            clearDebugHelpers();
-
             if (scene) {
                 [...scene.animationGroups].forEach(ag => {
                     ag.stop();
@@ -192,13 +182,14 @@
                 [...scene.transformNodes].forEach(tn => tn.dispose(false, true));
                 [...scene.skeletons].forEach(sk => sk.dispose());
             }
-
-            currentBounds = { min: null, max: null, center: null };
         }
 
         async function fetchTexturesList() {
             try {
-                const response = await fetch("https://api.github.com/repos/jm1d22/ColourableZebra3D/contents/docs/assets/textures");
+                const response = await fetch(`https://api.github.com/repos/jm1d22/ColourableZebra3D/contents/docs/assets/textures?t=${Date.now()}`);
+                if (!response.ok) {
+                    throw new Error(`GitHub returned ${response.status}`);
+                }
                 const data = await response.json();
                 
                 const namesSet = new Set();
@@ -209,13 +200,15 @@
                     }
                 });
 
-                availableZebras = Array.from(namesSet);
+                availableZebras = Array.from(namesSet).sort();
+                const previousSelection = selectedZebraName;
+                selectedZebraName = availableZebras.includes(previousSelection) ? previousSelection : availableZebras[0] || "";
                 populateDropdown(availableZebras);
 
-                if (availableZebras.length > 0) {
-                    selectedZebraName = availableZebras[0];
+                if (selectedZebraName) {
                     loadModelAndTexture();
                 }
+                log(`Found ${availableZebras.length} zebra texture set(s).`);
             } catch (err) {
                 log("Failed to fetch GitHub texture list. Using fallback.");
                 availableZebras = ["Texture_0001"];
@@ -296,9 +289,8 @@
                     if (validFound) {
                         const center = BABYLON.Vector3.Center(min, max);
                         const diagonal = BABYLON.Vector3.Distance(min, max);
-                        currentBounds = { min: min.clone(), max: max.clone(), center: center.clone() };
                         camera.setTarget(center);
-                        camera.radius = Math.max(diagonal * 1.8, 3.0);
+                        camera.radius = Math.max(diagonal * 1.6, 0.75);
                         camera.beta = Math.PI / 2.1;
                     }
                 }
@@ -321,6 +313,7 @@
                 const texturePath = `./assets/textures/${textureFile}?v=${Date.now()}`;
                 currentMaterial = new BABYLON.StandardMaterial("zebraMat", scene);
                 currentMaterial.diffuseTexture = new BABYLON.Texture(texturePath, scene, false, false);
+                currentMaterial.diffuseTexture.coordinatesIndex = isHighPolyMode ? 1 : 0;
                 currentMaterial.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
                 currentMaterial.backFaceCulling = false;
 
@@ -336,91 +329,6 @@
                     log(`Error loading model: ${message}`);
                 }
             });
-        }
-
-        function runDebugInspection() {
-            clearDebugHelpers();
-            log("=== START DEBUG INSPECTION ===");
-
-            if (!currentAssetContainer) {
-                log("No active model asset container found.");
-                return;
-            }
-
-            log(`Mode: ${isHighPolyMode ? 'High-Poly (Animated)' : 'Low-Poly (Static)'}`);
-            log(`Meshes: ${currentAssetContainer.meshes.length}, Skeletons: ${currentAssetContainer.skeletons.length}, TransformNodes: ${currentAssetContainer.transformNodes.length}`);
-
-            // Inspect Meshes
-            currentAssetContainer.meshes.forEach((m, idx) => {
-                if (m.getTotalVertices && m.getTotalVertices() > 0) {
-                    m.computeWorldMatrix(true);
-                    m.refreshBoundingInfo(true);
-                    const b = m.getBoundingInfo().boundingBox;
-                    log(`Mesh [${idx}] "${m.name}" (Enabled: ${m.isEnabled()}): Center=${b.centerWorld.asArray().map(n => n.toFixed(2))}, Min=${b.minimumWorld.asArray().map(n => n.toFixed(2))}, Max=${b.maximumWorld.asArray().map(n => n.toFixed(2))}`);
-                }
-            });
-
-            // Inspect Skeletons & Bones
-            if (currentAssetContainer.skeletons.length > 0) {
-                currentAssetContainer.skeletons.forEach((sk, idx) => {
-                    log(`Skeleton [${idx}] "${sk.name}": Total Bones = ${sk.bones.length}`);
-                    sk.computeAbsoluteTransforms();
-                    const targetMesh = currentAssetContainer.meshes.find(m => m.skeleton === sk && m.isEnabled() && m.getTotalVertices && m.getTotalVertices() > 0) || currentAssetContainer.meshes[0];
-
-                    sk.bones.forEach((b, bIdx) => {
-                        const wPos = targetMesh ? b.getAbsolutePosition(targetMesh) : b.getAbsolutePosition();
-                        log(` Bone [${bIdx}] "${b.name}": WorldPos = (${wPos.x.toFixed(2)}, ${wPos.y.toFixed(2)}, ${wPos.z.toFixed(2)})`);
-
-                        const boneSphere = BABYLON.MeshBuilder.CreateSphere(`bone_${bIdx}`, { diameter: 0.05 }, scene);
-                        boneSphere.position = wPos;
-                        const yellowMat = new BABYLON.StandardMaterial(`boneMat_${bIdx}`, scene);
-                        yellowMat.emissiveColor = new BABYLON.Color3(1, 1, 0);
-                        boneSphere.material = yellowMat;
-                        debugMeshes.push(boneSphere);
-                    });
-                });
-            }
-
-            // Inspect Camera Target
-            log(`Camera Target: (${camera.target.x.toFixed(2)}, ${camera.target.y.toFixed(2)}, ${camera.target.z.toFixed(2)})`);
-            log(`Camera Radius: ${camera.radius.toFixed(2)}, Alpha: ${camera.alpha.toFixed(2)}, Beta: ${camera.beta.toFixed(2)}`);
-
-            // Draw Visual 3D Markers
-            if (currentBounds.center) {
-                // Target Center Marker (Red Sphere)
-                const centerSphere = BABYLON.MeshBuilder.CreateSphere("debugCenterSphere", { diameter: 0.18 }, scene);
-                centerSphere.position = currentBounds.center;
-                const redMat = new BABYLON.StandardMaterial("redMat", scene);
-                redMat.emissiveColor = new BABYLON.Color3(1, 0, 0);
-                centerSphere.material = redMat;
-                debugMeshes.push(centerSphere);
-
-                // World Origin Marker (Green Sphere)
-                const originSphere = BABYLON.MeshBuilder.CreateSphere("debugOriginSphere", { diameter: 0.12 }, scene);
-                originSphere.position = BABYLON.Vector3.Zero();
-                const greenMat = new BABYLON.StandardMaterial("greenMat", scene);
-                greenMat.emissiveColor = new BABYLON.Color3(0, 1, 0);
-                originSphere.material = greenMat;
-                debugMeshes.push(originSphere);
-
-                // Computed Bounding Box (Cyan Wireframe Box)
-                const size = currentBounds.max.subtract(currentBounds.min);
-                const wireBox = BABYLON.MeshBuilder.CreateBox("debugBox", {
-                    width: Math.max(size.x, 0.05),
-                    height: Math.max(size.y, 0.05),
-                    depth: Math.max(size.z, 0.05)
-                }, scene);
-                wireBox.position = currentBounds.center;
-                const cyanMat = new BABYLON.StandardMaterial("cyanMat", scene);
-                cyanMat.wireframe = true;
-                cyanMat.emissiveColor = new BABYLON.Color3(0, 1, 1);
-                wireBox.material = cyanMat;
-                debugMeshes.push(wireBox);
-
-                log("Created Visual Debug Markers: Red = Camera Target, Green = World Origin (0,0,0), Yellow Dots = Bones, Cyan = Bounding Box");
-            }
-
-            log("=== END DEBUG INSPECTION ===");
         }
 
         // Event Listeners
@@ -443,7 +351,7 @@
             loadModelAndTexture();
         });
 
-        document.getElementById("debugBtn").addEventListener("click", runDebugInspection);
+        document.getElementById("refreshBtn").addEventListener("click", fetchTexturesList);
 
         document.getElementById("playBtn").addEventListener("click", () => {
             if (activeAnimGroup) activeAnimGroup.play(true);
