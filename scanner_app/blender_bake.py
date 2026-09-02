@@ -22,11 +22,6 @@ TARGET_NAME = "AnimatedZebra"
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
 
-try:
-    scene.cycles.device = 'GPU'
-except Exception:
-    scene.cycles.device = 'CPU'
-
 source_obj = bpy.data.objects.get(SOURCE_NAME)
 target_obj = bpy.data.objects.get(TARGET_NAME)
 
@@ -97,8 +92,15 @@ print(f"[Blender 5.0] Saved baked map: {{OUTPUT_TEXTURE_PATH}}")
         with open(temp_worker, "w", encoding="utf-8") as f:
             f.write(blender_internal_code)
 
-        cmd = [BLENDER_EXE, "--factory-startup", "-b", BLEND_FILE, "-P", str(temp_worker)]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        cmd = [BLENDER_EXE, "-b", BLEND_FILE, "-P", str(temp_worker)]
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         for line in process.stdout:
             print(line, end="")
         process.wait()
