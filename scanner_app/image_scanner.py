@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import simpledialog
 from pathlib import Path
 from blender_bake import run_blender_bake
+from config import TOKEN_FILE
 
 # ============================================================
 # CONFIGURATION
@@ -19,7 +20,6 @@ BRANCH = "main"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-TOKEN_FILE = SCRIPT_DIR / "token.txt"
 
 def prompt_zebra_name() -> str:
     """Displays a GUI text input box for the user to name their zebra."""

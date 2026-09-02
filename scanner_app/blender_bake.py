@@ -2,8 +2,10 @@ import os
 import subprocess
 from pathlib import Path
 
-BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe"
-BLEND_FILE = r"C:\Users\jm1d22\OneDrive - University of Southampton\Documents\Work Documents\Projects\Hands On Humanities\Zebra3D\ColourableZebra3D\scanner_app\ZebraBake.blend"
+try:
+    from .config import BLENDER_EXE, BLEND_FILE
+except ImportError:
+    from config import BLENDER_EXE, BLEND_FILE
 
 def run_blender_bake(source_jpg_path: Path, output_png_path: Path) -> bool:
     """Headlessly bakes texture from BlockyZebra to AnimatedZebra in Blender 5.0."""
@@ -92,7 +94,7 @@ print(f"[Blender 5.0] Saved baked map: {{OUTPUT_TEXTURE_PATH}}")
         with open(temp_worker, "w", encoding="utf-8") as f:
             f.write(blender_internal_code)
 
-        cmd = [BLENDER_EXE, "-b", BLEND_FILE, "-P", str(temp_worker)]
+        cmd = [str(BLENDER_EXE), "-b", str(BLEND_FILE), "-P", str(temp_worker)]
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
